@@ -1,4 +1,4 @@
-# MazeGenesis
+# [MazeGenesis](https://amanpriyanshu.github.io/MazeGenesis/)
 Bunch of maze algorithms, see how they create mazes. List of algorithms implemented:
 
 - Depth-First Search (DFS) with Backtracking
