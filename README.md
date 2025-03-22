@@ -20,4 +20,4 @@ Bunch of maze algorithms, see how they create mazes. List of algorithms implemen
 6. Click "Reset" to clear the canvas
 
 ## License
-[/LICENSE]
+[MIT LICENSE](/LICENSE)
