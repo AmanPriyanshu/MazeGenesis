@@ -1,0 +1,1004 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Maze Generator and Solver</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f0f0f0;
+      margin: 0;
+      padding: 20px;
+      display: flex;
+      justify-content: center;
+    }
+    .container {
+      max-width: 600px;
+      width: 100%;
+    }
+    h1 {
+      text-align: center;
+    }
+    #mazeContainer {
+      background: #fff;
+      border: 4px solid #333;
+      border-radius: 20px;
+      padding: 10px;
+      margin-bottom: 20px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.2);
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    #controls, #algorithmDescription {
+      background: #fff;
+      padding: 15px;
+      margin-bottom: 20px;
+      border-radius: 4px;
+      box-shadow: 0 0 5px rgba(0,0,0,0.1);
+    }
+    label, select, input, button {
+      margin: 5px 5px 5px 0;
+      font-size: 1em;
+    }
+    button {
+      padding: 5px 10px;
+      cursor: pointer;
+    }
+    @media (max-width: 600px) {
+      label, select, input, button {
+        display: block;
+        width: 100%;
+        margin: 5px 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Maze Generator &amp; Solver</h1>
+    <div id="mazeContainer">
+      <canvas id="mazeCanvas"></canvas>
+    </div>
+    <div id="controls">
+      <label for="height">Height (cells):</label>
+      <input type="number" id="height" value="10" min="5" max="100">
+      
+      <label for="width">Width (cells):</label>
+      <input type="number" id="width" value="10" min="5" max="100">
+      <br>
+      <label for="initState">Initial Grid:</label>
+      <select id="initState">
+        <option value="walls">All Walls</option>
+        <option value="empty">Empty</option>
+      </select>
+      <br>
+      <label for="algorithm">Algorithm:</label>
+      <select id="algorithm">
+        <option value="dfs">Depth-First Search (DFS) with Backtracking</option>
+        <option value="binaryTree">Binary Tree</option>
+        <option value="kruskal">Randomized Kruskal's</option>
+        <option value="prim">Randomized Prim's</option>
+        <option value="recursiveDivision">Recursive Division</option>
+        <option value="eller">Eller's Algorithm</option>
+        <option value="growingTree">Growing Tree</option>
+        <option value="wilson">Wilson's Algorithm</option>
+        <option value="huntAndKill">Hunt &amp; Kill</option>
+      </select>
+      <br>
+      <label for="seed">Random Seed (optional):</label>
+      <input type="text" id="seed" placeholder="None">
+      <br>
+      <button id="startBtn">Start</button>
+      <button id="resetBtn">Reset</button>
+      <button id="solveBtn">Solve Maze (A*)</button>
+    </div>
+    <div id="algorithmDescription">
+      <p>Select an algorithm to see its description.</p>
+    </div>
+  </div>
+  
+  <script>
+    const canvas = document.getElementById("mazeCanvas");
+    const ctx = canvas.getContext("2d");
+    let cellSize = 20;
+    let grid = [];
+    let stack = [];
+    let current = null;
+    let animationDelay = 30;
+    let rand;
+    let timeouts = [];
+    let generationInProgress = false;
+    let solvingInProgress = false;
+    function Cell(row, col, initWalls) {
+      this.row = row;
+      this.col = col;
+      this.walls = { top: initWalls, right: initWalls, bottom: initWalls, left: initWalls };
+      this.visited = false;
+      this.f = 0;
+      this.g = 0;
+      this.h = 0;
+      this.previous = null;
+      this.set = undefined;
+      this.inMaze = false;
+    }
+    
+    function seededRandomGenerator(seed) {
+      let m = 4294967296, a = 1664525, c = 1013904223;
+      let state = parseInt(seed) || Date.now();
+      return function() {
+        state = (a * state + c) % m;
+        return state / m;
+      }
+    }
+    function initRandom(seedVal) {
+      if (seedVal !== "") {
+        rand = seededRandomGenerator(seedVal);
+      } else {
+        rand = Math.random;
+      }
+    }
+    
+    function index(row, col, rows, cols) {
+      if (row < 0 || col < 0 || row >= rows || col >= cols) return undefined;
+      return row * cols + col;
+    }
+    
+    function initGrid(rows, cols, initState) {
+      grid = [];
+      let useWalls = (initState === "walls") ? true : false;
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          grid.push(new Cell(r, c, useWalls));
+        }
+      }
+    }
+    
+    function clearTimeouts() {
+      for (let t of timeouts) {
+        clearTimeout(t);
+      }
+      timeouts = [];
+    }
+    function drawGrid(rows, cols, extra = {}) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      for (let i = 0; i < grid.length; i++) {
+        let cell = grid[i];
+        let x = cell.col * cellSize;
+        let y = cell.row * cellSize;
+        ctx.strokeStyle = "#000";
+        ctx.lineWidth = 2;
+        if (cell.walls.top) {
+          ctx.beginPath();
+          ctx.moveTo(x, y);
+          ctx.lineTo(x + cellSize, y);
+          ctx.stroke();
+        }
+        if (cell.walls.right) {
+          ctx.beginPath();
+          ctx.moveTo(x + cellSize, y);
+          ctx.lineTo(x + cellSize, y + cellSize);
+          ctx.stroke();
+        }
+        if (cell.walls.bottom) {
+          ctx.beginPath();
+          ctx.moveTo(x + cellSize, y + cellSize);
+          ctx.lineTo(x, y + cellSize);
+          ctx.stroke();
+        }
+        if (cell.walls.left) {
+          ctx.beginPath();
+          ctx.moveTo(x, y + cellSize);
+          ctx.lineTo(x, y);
+          ctx.stroke();
+        }
+        if (cell.visited) {
+          ctx.fillStyle = "#b3e5fc";
+          ctx.fillRect(x, y, cellSize, cellSize);
+        }
+      }
+      
+      if (current) {
+        ctx.fillStyle = "#ffeb3b";
+        ctx.fillRect(current.col * cellSize, current.row * cellSize, cellSize, cellSize);
+      }
+      
+      if (extra.openSet) {
+        for (let cell of extra.openSet) {
+          let x = cell.col * cellSize;
+          let y = cell.row * cellSize;
+          ctx.fillStyle = "rgba(0, 255, 0, 0.4)";
+          ctx.fillRect(x, y, cellSize, cellSize);
+        }
+      }
+      if (extra.closedSet) {
+        for (let cell of extra.closedSet) {
+          let x = cell.col * cellSize;
+          let y = cell.row * cellSize;
+          ctx.fillStyle = "rgba(255, 0, 0, 0.4)";
+          ctx.fillRect(x, y, cellSize, cellSize);
+        }
+      }
+      
+      if (extra.path) {
+        ctx.beginPath();
+        ctx.strokeStyle = "blue";
+        ctx.lineWidth = 4;
+        for (let i = 0; i < extra.path.length; i++) {
+          let cell = extra.path[i];
+          let x = cell.col * cellSize + cellSize/2;
+          let y = cell.row * cellSize + cellSize/2;
+          if (i === 0) {
+            ctx.moveTo(x, y);
+          } else {
+            ctx.lineTo(x, y);
+          }
+        }
+        ctx.stroke();
+      }
+      
+      let start = grid[0];
+      let end = grid[grid.length - 1];
+      ctx.fillStyle = "green";
+      ctx.beginPath();
+      ctx.arc(start.col * cellSize + cellSize/2, start.row * cellSize + cellSize/2, cellSize/4, 0, 2*Math.PI);
+      ctx.fill();
+      ctx.fillStyle = "white";
+      ctx.font = (cellSize/2) + "px Arial";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("S", start.col * cellSize + cellSize/2, start.row * cellSize + cellSize/2);
+      ctx.fillStyle = "red";
+      ctx.beginPath();
+      ctx.arc(end.col * cellSize + cellSize/2, end.row * cellSize + cellSize/2, cellSize/4, 0, 2*Math.PI);
+      ctx.fill();
+      ctx.fillStyle = "white";
+      ctx.fillText("E", end.col * cellSize + cellSize/2, end.row * cellSize + cellSize/2);
+    }
+    function dfsMaze(rows, cols) {
+      generationInProgress = true;
+      current = grid[0];
+      current.visited = true;
+      stack = [];
+      
+      function step() {
+        if (!generationInProgress) return;
+        drawGrid(rows, cols);
+        let neighbors = [];
+        let r = current.row, c = current.col;
+        let top = grid[index(r - 1, c, rows, cols)];
+        let right = grid[index(r, c + 1, rows, cols)];
+        let bottom = grid[index(r + 1, c, rows, cols)];
+        let left = grid[index(r, c - 1, rows, cols)];
+        if (top && !top.visited) neighbors.push(top);
+        if (right && !right.visited) neighbors.push(right);
+        if (bottom && !bottom.visited) neighbors.push(bottom);
+        if (left && !left.visited) neighbors.push(left);
+        if (neighbors.length > 0) {
+          let next = neighbors[Math.floor(rand() * neighbors.length)];
+          next.visited = true;
+          stack.push(current);
+          let x = current.col - next.col;
+          let y = current.row - next.row;
+          if (x === 1) { current.walls.left = false; next.walls.right = false; }
+          else if (x === -1) { current.walls.right = false; next.walls.left = false; }
+          if (y === 1) { current.walls.top = false; next.walls.bottom = false; }
+          else if (y === -1) { current.walls.bottom = false; next.walls.top = false; }
+          current = next;
+        } else if (stack.length > 0) {
+          current = stack.pop();
+        } else {
+          drawGrid(rows, cols);
+          generationInProgress = false;
+          return;
+        }
+        let t = setTimeout(step, animationDelay);
+        timeouts.push(t);
+      }
+      step();
+    }
+    
+    function binaryTreeMaze(rows, cols) {
+      generationInProgress = true;
+      let cellIndex = 0;
+      function step() {
+        if (!generationInProgress) return;
+        if (cellIndex >= grid.length) {
+          drawGrid(rows, cols);
+          generationInProgress = false;
+          return;
+        }
+        let cell = grid[cellIndex];
+        let choices = [];
+        if (cell.row > 0) choices.push("top");
+        if (cell.col < cols - 1) choices.push("right");
+        if (choices.length > 0) {
+          let choice = choices[Math.floor(rand() * choices.length)];
+          if (choice === "top") {
+            let neighbor = grid[index(cell.row - 1, cell.col, rows, cols)];
+            cell.walls.top = false;
+            neighbor.walls.bottom = false;
+          } else if (choice === "right") {
+            let neighbor = grid[index(cell.row, cell.col + 1, rows, cols)];
+            cell.walls.right = false;
+            neighbor.walls.left = false;
+          }
+        }
+        cell.visited = true;
+        cellIndex++;
+        drawGrid(rows, cols);
+        let t = setTimeout(step, animationDelay);
+        timeouts.push(t);
+      }
+      step();
+    }
+    
+    function kruskalMaze(rows, cols) {
+      generationInProgress = true;
+      let parent = [];
+      for (let i = 0; i < grid.length; i++) {
+        parent[i] = i;
+      }
+      function find(i) {
+        if (parent[i] !== i) parent[i] = find(parent[i]);
+        return parent[i];
+      }
+      function union(i, j) {
+        parent[find(i)] = find(j);
+      }
+      let wallsList = [];
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          let i = index(r, c, rows, cols);
+          let cell = grid[i];
+          if (c < cols - 1) {
+            let rightCell = grid[index(r, c + 1, rows, cols)];
+            wallsList.push({cell1: cell, cell2: rightCell, direction: "right"});
+          }
+          if (r < rows - 1) {
+            let bottomCell = grid[index(r + 1, c, rows, cols)];
+            wallsList.push({cell1: cell, cell2: bottomCell, direction: "bottom"});
+          }
+        }
+      }
+      for (let i = wallsList.length - 1; i > 0; i--) {
+        let j = Math.floor(rand() * (i + 1));
+        [wallsList[i], wallsList[j]] = [wallsList[j], wallsList[i]];
+      }
+      let wallIndex = 0;
+      function step() {
+        if (!generationInProgress) return;
+        if (wallIndex >= wallsList.length) {
+          drawGrid(rows, cols);
+          generationInProgress = false;
+          return;
+        }
+        let wall = wallsList[wallIndex];
+        let i1 = index(wall.cell1.row, wall.cell1.col, rows, cols);
+        let i2 = index(wall.cell2.row, wall.cell2.col, rows, cols);
+        if (find(i1) !== find(i2)) {
+          union(i1, i2);
+          if (wall.direction === "right") {
+            wall.cell1.walls.right = false;
+            wall.cell2.walls.left = false;
+          } else if (wall.direction === "bottom") {
+            wall.cell1.walls.bottom = false;
+            wall.cell2.walls.top = false;
+          }
+        }
+        drawGrid(rows, cols);
+        wallIndex++;
+        let t = setTimeout(step, animationDelay);
+        timeouts.push(t);
+      }
+      step();
+    }
+    
+    function primMaze(rows, cols) {
+      generationInProgress = true;
+      let start = grid[Math.floor(rand() * grid.length)];
+      start.visited = true;
+      let wallList = [];
+      function addWalls(cell) {
+        let r = cell.row, c = cell.col;
+        if (r > 0) {
+          let neighbor = grid[index(r - 1, c, rows, cols)];
+          if (!neighbor.visited) wallList.push({cell: cell, neighbor: neighbor, direction: "top"});
+        }
+        if (c < cols - 1) {
+          let neighbor = grid[index(r, c + 1, rows, cols)];
+          if (!neighbor.visited) wallList.push({cell: cell, neighbor: neighbor, direction: "right"});
+        }
+        if (r < rows - 1) {
+          let neighbor = grid[index(r + 1, c, rows, cols)];
+          if (!neighbor.visited) wallList.push({cell: cell, neighbor: neighbor, direction: "bottom"});
+        }
+        if (c > 0) {
+          let neighbor = grid[index(r, c - 1, rows, cols)];
+          if (!neighbor.visited) wallList.push({cell: cell, neighbor: neighbor, direction: "left"});
+        }
+      }
+      addWalls(start);
+      function step() {
+        if (!generationInProgress) return;
+        if (wallList.length === 0) {
+          drawGrid(rows, cols);
+          generationInProgress = false;
+          return;
+        }
+        let idx = Math.floor(rand() * wallList.length);
+        let wall = wallList[idx];
+        if (!wall.neighbor.visited) {
+          if (wall.direction === "top") {
+            wall.cell.walls.top = false;
+            wall.neighbor.walls.bottom = false;
+          } else if (wall.direction === "right") {
+            wall.cell.walls.right = false;
+            wall.neighbor.walls.left = false;
+          } else if (wall.direction === "bottom") {
+            wall.cell.walls.bottom = false;
+            wall.neighbor.walls.top = false;
+          } else if (wall.direction === "left") {
+            wall.cell.walls.left = false;
+            wall.neighbor.walls.right = false;
+          }
+          wall.neighbor.visited = true;
+          addWalls(wall.neighbor);
+        }
+        wallList.splice(idx, 1);
+        drawGrid(rows, cols);
+        let t = setTimeout(step, animationDelay);
+        timeouts.push(t);
+      }
+      step();
+    }
+    
+    function recursiveDivisionMaze(rows, cols) {
+      generationInProgress = true;
+      initGrid(rows, cols, "empty");
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          let cell = grid[index(r, c, rows, cols)];
+          if (r === 0) cell.walls.top = true;
+          if (r === rows - 1) cell.walls.bottom = true;
+          if (c === 0) cell.walls.left = true;
+          if (c === cols - 1) cell.walls.right = true;
+        }
+      }
+      let divisionSteps = [];
+      function divide(x, y, w, h, orientation) {
+        if (w < 2 || h < 2) return;
+        if (orientation === "horizontal") {
+          let possibleRows = [];
+          for (let i = y + 1; i < y + h; i++) {
+            possibleRows.push(i);
+          }
+          if (possibleRows.length === 0) return;
+          let wallRow = possibleRows[Math.floor(rand() * possibleRows.length)];
+          let gapCol = x + Math.floor(rand() * w);
+          divisionSteps.push({type: "horizontal", row: wallRow, start: x, end: x + w - 1, gap: gapCol});
+          divide(x, y, w, wallRow - y, (w > (wallRow - y)) ? "vertical" : "horizontal");
+          divide(x, wallRow, w, y + h - wallRow, (w > (y + h - wallRow)) ? "vertical" : "horizontal");
+        } else {
+          let possibleCols = [];
+          for (let i = x + 1; i < x + w; i++) {
+            possibleCols.push(i);
+          }
+          if (possibleCols.length === 0) return;
+          let wallCol = possibleCols[Math.floor(rand() * possibleCols.length)];
+          let gapRow = y + Math.floor(rand() * h);
+          divisionSteps.push({type: "vertical", col: wallCol, start: y, end: y + h - 1, gap: gapRow});
+          divide(x, y, wallCol - x, h, ((wallCol - x) > h) ? "vertical" : "horizontal");
+          divide(wallCol, y, x + w - wallCol, h, ((x + w - wallCol) > h) ? "vertical" : "horizontal");
+        }
+      }
+      divide(0, 0, cols, rows, (cols > rows) ? "vertical" : "horizontal");
+      let stepIndex = 0;
+      function animateDivision() {
+        if (stepIndex >= divisionSteps.length) {
+          drawGrid(rows, cols);
+          generationInProgress = false;
+          return;
+        }
+        let stepData = divisionSteps[stepIndex];
+        if (stepData.type === "horizontal") {
+          for (let c = stepData.start; c <= stepData.end; c++) {
+            if (stepData.row > 0 && stepData.row < rows && c !== stepData.gap) {
+              let cellAbove = grid[index(stepData.row - 1, c, rows, cols)];
+              let cellBelow = grid[index(stepData.row, c, rows, cols)];
+              cellAbove.walls.bottom = true;
+              cellBelow.walls.top = true;
+            }
+          }
+        } else if (stepData.type === "vertical") {
+          for (let r = stepData.start; r <= stepData.end; r++) {
+            if (stepData.col > 0 && stepData.col < cols && r !== stepData.gap) {
+              let cellLeft = grid[index(r, stepData.col - 1, rows, cols)];
+              let cellRight = grid[index(r, stepData.col, rows, cols)];
+              cellLeft.walls.right = true;
+              cellRight.walls.left = true;
+            }
+          }
+        }
+        drawGrid(rows, cols);
+        stepIndex++;
+        let t = setTimeout(animateDivision, animationDelay);
+        timeouts.push(t);
+      }
+      animateDivision();
+    }
+    
+    function ellerMaze(rows, cols) {
+      generationInProgress = true;
+      let currentRow = 0;
+      let nextSetId = 1;
+      for (let c = 0; c < cols; c++) {
+        let cell = grid[index(currentRow, c, rows, cols)];
+        cell.set = nextSetId++;
+      }
+      function processRow() {
+        for (let c = 0; c < cols - 1; c++) {
+          let cell = grid[index(currentRow, c, rows, cols)];
+          let rightCell = grid[index(currentRow, c + 1, rows, cols)];
+          if (cell.set !== rightCell.set && (rand() < 0.5)) {
+            cell.walls.right = false;
+            rightCell.walls.left = false;
+            let oldSet = rightCell.set;
+            for (let cc = 0; cc < cols; cc++) {
+              let tempCell = grid[index(currentRow, cc, rows, cols)];
+              if (tempCell.set === oldSet) {
+                tempCell.set = cell.set;
+              }
+            }
+          }
+        }
+        let setCells = {};
+        for (let c = 0; c < cols; c++) {
+          let cell = grid[index(currentRow, c, rows, cols)];
+          if (!setCells[cell.set]) setCells[cell.set] = [];
+          setCells[cell.set].push(c);
+        }
+        for (let s in setCells) {
+          let colsInSet = setCells[s];
+          let chosen = [];
+          for (let cc of colsInSet) {
+            if (rand() < 0.5) chosen.push(cc);
+          }
+          if (chosen.length === 0) {
+            chosen.push(colsInSet[Math.floor(rand() * colsInSet.length)]);
+          }
+          for (let cc of chosen) {
+            let cell = grid[index(currentRow, cc, rows, cols)];
+            if (currentRow < rows - 1) {
+              cell.walls.bottom = false;
+              let bottomCell = grid[index(currentRow + 1, cc, rows, cols)];
+              bottomCell.walls.top = false;
+              bottomCell.set = cell.set;
+            }
+          }
+        }
+        if (currentRow < rows - 1) {
+          for (let c = 0; c < cols; c++) {
+            let bottomCell = grid[index(currentRow + 1, c, rows, cols)];
+            if (bottomCell.set === undefined) {
+              bottomCell.set = nextSetId++;
+            }
+          }
+        }
+        drawGrid(rows, cols);
+        if (currentRow < rows - 1) {
+          currentRow++;
+          let t = setTimeout(processRow, animationDelay);
+          timeouts.push(t);
+        } else {
+          for (let c = 0; c < cols - 1; c++) {
+            let cell = grid[index(currentRow, c, rows, cols)];
+            let rightCell = grid[index(currentRow, c + 1, rows, cols)];
+            if (cell.set !== rightCell.set) {
+              cell.walls.right = false;
+              rightCell.walls.left = false;
+              let oldSet = rightCell.set;
+              for (let cc = 0; cc < cols; cc++) {
+                let tempCell = grid[index(currentRow, cc, rows, cols)];
+                if (tempCell.set === oldSet) {
+                  tempCell.set = cell.set;
+                }
+              }
+            }
+          }
+          drawGrid(rows, cols);
+          generationInProgress = false;
+        }
+      }
+      processRow();
+    }
+    
+    function growingTreeMaze(rows, cols) {
+      generationInProgress = true;
+      let cells = [];
+      let start = grid[Math.floor(rand() * grid.length)];
+      start.visited = true;
+      cells.push(start);
+      function step() {
+        if (cells.length === 0) {
+          generationInProgress = false;
+          drawGrid(rows, cols);
+          return;
+        }
+        let idx = Math.floor(rand() * cells.length);
+        let cell = cells[idx];
+        let r = cell.row, c = cell.col;
+        let neighbors = [];
+        let top = grid[index(r - 1, c, rows, cols)];
+        let right = grid[index(r, c + 1, rows, cols)];
+        let bottom = grid[index(r + 1, c, rows, cols)];
+        let left = grid[index(r, c - 1, rows, cols)];
+        if (top && !top.visited) neighbors.push(top);
+        if (right && !right.visited) neighbors.push(right);
+        if (bottom && !bottom.visited) neighbors.push(bottom);
+        if (left && !left.visited) neighbors.push(left);
+        if (neighbors.length > 0) {
+          let next = neighbors[Math.floor(rand() * neighbors.length)];
+          next.visited = true;
+          let dx = cell.col - next.col;
+          let dy = cell.row - next.row;
+          if (dx === 1) { cell.walls.left = false; next.walls.right = false; }
+          else if (dx === -1) { cell.walls.right = false; next.walls.left = false; }
+          if (dy === 1) { cell.walls.top = false; next.walls.bottom = false; }
+          else if (dy === -1) { cell.walls.bottom = false; next.walls.top = false; }
+          cells.push(next);
+        } else {
+          cells.splice(idx, 1);
+        }
+        drawGrid(rows, cols);
+        let t = setTimeout(step, animationDelay);
+        timeouts.push(t);
+      }
+      step();
+    }
+    
+    function wilsonMaze(rows, cols) {
+      generationInProgress = true;
+      for (let cell of grid) {
+        cell.inMaze = false;
+      }
+      let startCell = grid[Math.floor(rand() * grid.length)];
+      startCell.inMaze = true;
+      
+      function randomWalk(start) {
+        let path = [start];
+        function walkStep() {
+          let currentCell = path[path.length - 1];
+          if (currentCell.inMaze) {
+            for (let i = 0; i < path.length - 1; i++) {
+              let cellA = path[i];
+              let cellB = path[i + 1];
+              let dx = cellA.col - cellB.col;
+              let dy = cellA.row - cellB.row;
+              if (dx === 1) { cellA.walls.left = false; cellB.walls.right = false; }
+              else if (dx === -1) { cellA.walls.right = false; cellB.walls.left = false; }
+              if (dy === 1) { cellA.walls.top = false; cellB.walls.bottom = false; }
+              else if (dy === -1) { cellA.walls.bottom = false; cellB.walls.top = false; }
+              cellA.inMaze = true;
+            }
+            path[path.length - 1].inMaze = true;
+            drawGrid(rows, cols);
+            processWilson();
+            return;
+          } else {
+            let r = currentCell.row, c = currentCell.col;
+            let neighbors = [];
+            let top = grid[index(r - 1, c, rows, cols)];
+            let right = grid[index(r, c + 1, rows, cols)];
+            let bottom = grid[index(r + 1, c, rows, cols)];
+            let left = grid[index(r, c - 1, rows, cols)];
+            if (top) neighbors.push(top);
+            if (right) neighbors.push(right);
+            if (bottom) neighbors.push(bottom);
+            if (left) neighbors.push(left);
+            let next = neighbors[Math.floor(rand() * neighbors.length)];
+            let pos = path.findIndex(cell => cell === next);
+            if (pos !== -1) {
+              path = path.slice(0, pos + 1);
+            } else {
+              path.push(next);
+            }
+            drawGrid(rows, cols);
+            let t = setTimeout(walkStep, animationDelay);
+            timeouts.push(t);
+          }
+        }
+        walkStep();
+      }
+      
+      function processWilson() {
+        let notInMaze = grid.filter(cell => !cell.inMaze);
+        if (notInMaze.length === 0) {
+          generationInProgress = false;
+          drawGrid(rows, cols);
+          return;
+        }
+        let randomCell = notInMaze[Math.floor(rand() * notInMaze.length)];
+        randomWalk(randomCell);
+      }
+      processWilson();
+    }
+    
+    function huntAndKillMaze(rows, cols) {
+      generationInProgress = true;
+      current = grid[0];
+      current.visited = true;
+      function killPhase() {
+        let r = current.row, c = current.col;
+        let neighbors = [];
+        let top = grid[index(r - 1, c, rows, cols)];
+        let right = grid[index(r, c + 1, rows, cols)];
+        let bottom = grid[index(r + 1, c, rows, cols)];
+        let left = grid[index(r, c - 1, rows, cols)];
+        if (top && !top.visited) neighbors.push(top);
+        if (right && !right.visited) neighbors.push(right);
+        if (bottom && !bottom.visited) neighbors.push(bottom);
+        if (left && !left.visited) neighbors.push(left);
+        if (neighbors.length > 0) {
+          let next = neighbors[Math.floor(rand() * neighbors.length)];
+          next.visited = true;
+          let dx = current.col - next.col;
+          let dy = current.row - next.row;
+          if (dx === 1) { current.walls.left = false; next.walls.right = false; }
+          else if (dx === -1) { current.walls.right = false; next.walls.left = false; }
+          if (dy === 1) { current.walls.top = false; next.walls.bottom = false; }
+          else if (dy === -1) { current.walls.bottom = false; next.walls.top = false; }
+          current = next;
+          drawGrid(rows, cols);
+          let t = setTimeout(killPhase, animationDelay);
+          timeouts.push(t);
+        } else {
+          huntPhase();
+        }
+      }
+      function huntPhase() {
+        let found = false;
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            let cell = grid[index(r, c, rows, cols)];
+            if (cell.visited) {
+              let neighbors = [];
+              let top = grid[index(r - 1, c, rows, cols)];
+              let right = grid[index(r, c + 1, rows, cols)];
+              let bottom = grid[index(r + 1, c, rows, cols)];
+              let left = grid[index(r, c - 1, rows, cols)];
+              if (top && !top.visited) neighbors.push(top);
+              if (right && !right.visited) neighbors.push(right);
+              if (bottom && !bottom.visited) neighbors.push(bottom);
+              if (left && !left.visited) neighbors.push(left);
+              if (neighbors.length > 0) {
+                let next = neighbors[Math.floor(rand() * neighbors.length)];
+                next.visited = true;
+                let dx = cell.col - next.col;
+                let dy = cell.row - next.row;
+                if (dx === 1) { cell.walls.left = false; next.walls.right = false; }
+                else if (dx === -1) { cell.walls.right = false; next.walls.left = false; }
+                if (dy === 1) { cell.walls.top = false; next.walls.bottom = false; }
+                else if (dy === -1) { cell.walls.bottom = false; next.walls.top = false; }
+                current = next;
+                found = true;
+                drawGrid(rows, cols);
+                let t = setTimeout(killPhase, animationDelay);
+                timeouts.push(t);
+                break;
+              }
+            }
+          }
+          if (found) break;
+        }
+        if (!found) {
+          generationInProgress = false;
+          drawGrid(rows, cols);
+          return;
+        }
+      }
+      killPhase();
+    }
+    
+    
+    function aStarSolve(rows, cols) {
+      solvingInProgress = true;
+      let openSet = [];
+      let closedSet = [];
+      let start = grid[0];
+      let end = grid[grid.length - 1];
+      openSet.push(start);
+      
+      function heuristic(a, b) {
+        return Math.abs(a.row - b.row) + Math.abs(a.col - b.col);
+      }
+      
+      function getNeighborsForA(cell) {
+        let neighbors = [];
+        let r = cell.row, c = cell.col;
+        if (!cell.walls.top) {
+          let neighbor = grid[index(r - 1, c, rows, cols)];
+          if (neighbor) neighbors.push(neighbor);
+        }
+        if (!cell.walls.right) {
+          let neighbor = grid[index(r, c + 1, rows, cols)];
+          if (neighbor) neighbors.push(neighbor);
+        }
+        if (!cell.walls.bottom) {
+          let neighbor = grid[index(r + 1, c, rows, cols)];
+          if (neighbor) neighbors.push(neighbor);
+        }
+        if (!cell.walls.left) {
+          let neighbor = grid[index(r, c - 1, rows, cols)];
+          if (neighbor) neighbors.push(neighbor);
+        }
+        return neighbors;
+      }
+      
+      function reconstructPath(current) {
+        let path = [];
+        let temp = current;
+        path.push(temp);
+        while (temp.previous) {
+          path.push(temp.previous);
+          temp = temp.previous;
+        }
+        return path.reverse();
+      }
+      
+      function step() {
+        if (!solvingInProgress) return;
+        if (openSet.length > 0) {
+          let winner = 0;
+          for (let i = 1; i < openSet.length; i++) {
+            if (openSet[i].f < openSet[winner].f) {
+              winner = i;
+            }
+          }
+          let currentA = openSet[winner];
+          if (currentA === end) {
+            let path = reconstructPath(currentA);
+            drawGrid(rows, cols, { path: path, openSet: openSet, closedSet: closedSet });
+            solvingInProgress = false;
+            return;
+          }
+          openSet.splice(winner, 1);
+          closedSet.push(currentA);
+          let neighbors = getNeighborsForA(currentA);
+          for (let neighbor of neighbors) {
+            if (closedSet.indexOf(neighbor) !== -1) continue;
+            let tentativeG = currentA.g + 1;
+            let newPath = false;
+            if (openSet.indexOf(neighbor) === -1) {
+              openSet.push(neighbor);
+              newPath = true;
+            } else if (tentativeG < neighbor.g) {
+              newPath = true;
+            }
+            if (newPath) {
+              neighbor.g = tentativeG;
+              neighbor.h = heuristic(neighbor, end);
+              neighbor.f = neighbor.g + neighbor.h;
+              neighbor.previous = currentA;
+            }
+          }
+          drawGrid(rows, cols, { openSet: openSet, closedSet: closedSet });
+          let t = setTimeout(step, animationDelay);
+          timeouts.push(t);
+        } else {
+          alert("No solution found.");
+          solvingInProgress = false;
+          return;
+        }
+      }
+      step();
+    }
+    
+    
+    const algorithmDescriptions = {
+    "dfs": "Depth-First Search (DFS) with Backtracking: Algorithm starts at cell (0,0), marks it visited, and maintains a stack of visited cells. At each step, it randomly chooses an unvisited neighbor, removes the wall between them, marks the neighbor as visited, and adds it to the stack. If all neighbors are visited, it pops the stack (backtracks) until finding a cell with unvisited neighbors. Time complexity: O(n), where n is the number of cells. Creates perfect mazes with exactly one path between any two points.",
+    
+    "binaryTree": "Binary Tree Algorithm: Processes each cell in the grid, randomly removing either the North or East wall (with equal probability). At grid boundaries where North or East isn't available, it only removes the available wall. Time complexity: O(n). The spatial bias creates a distinctive diagonal path from Southwest to Northeast, making these mazes trivially solvable by always heading North or East from any point. Not all maze configurations are possible with this algorithm.",
+    
+    "kruskal": "Randomized Kruskal's Algorithm: Implements a randomized minimum spanning tree algorithm using a disjoint-set data structure. Each cell starts in its own set. The algorithm randomizes all walls, then iterates through them, removing a wall if the cells it separates belong to different sets (using union-find operations). This prevents cycles while ensuring connectivity. Time complexity: O(n log n) due to sorting walls or O(n) with randomization. Space complexity: O(n) for the disjoint-set structure.",
+    
+    "prim": "Randomized Prim's Algorithm: Generates a minimum spanning tree starting from a random cell. Maintains a list of frontier walls (walls between visited and unvisited cells). Repeatedly selects a random frontier wall, adds the unvisited cell to the maze, removes the wall, and updates the frontier list with the new cell's walls. Time complexity: O(n log n) with a priority queue or O(n²) with a simple list. Characteristically creates mazes with many short dead ends and a 'bushy' appearance.",
+    
+    "recursiveDivision": "Recursive Division Algorithm: A divide-and-conquer approach that starts with an empty grid and recursively adds walls. Each step divides a chamber into two by adding a wall with a single passage, then recursively processes the two new chambers. The orientation of division (horizontal/vertical) can be random or based on chamber dimensions. Time complexity: O(n log n). Creates mazes with distinctly straight, perpendicular corridors and a more geometric appearance.",
+    
+    "eller": "Eller's Algorithm: Generates the maze one row at a time with O(width) memory complexity, making it memory-efficient for large mazes. Each cell in a row belongs to a set. The algorithm randomly merges adjacent cells in different sets, then randomly connects sets to the next row while ensuring at least one connection per set. In the final row, all different sets are merged. Time complexity: O(height × width). Creates mazes with a slight horizontal bias.",
+    
+    "growingTree": "Growing Tree Algorithm: Maintains a list of cells and repeatedly selects one to process its neighbors. The selection method determines the maze characteristics: selecting the most recently added cell (newest) mimics DFS, random selection mimics Prim's, and a mix creates intermediate characteristics. After selecting a cell, it connects to a random unvisited neighbor or removes the cell if none exist. Time complexity: O(n) but behavior varies with selection strategy. Highly versatile algorithm that can generate various maze types.",
+    
+    "wilson": "Wilson's Algorithm: Uses loop-erased random walks to generate perfectly unbiased mazes (all possible maze configurations have equal probability). Starts with one random cell in the maze. Then repeatedly: 1) Pick a random unvisited cell, 2) Perform a random walk until hitting the maze, erasing any loops formed during the walk, 3) Add the final path to the maze. Time complexity: O(n³) expected but can be worse on unlucky runs. Produces statistically unbiased mazes at the cost of slower generation.",
+    
+    "huntAndKill": "Hunt & Kill Algorithm: A variation of DFS that handles isolated regions differently. It performs a random walk until reaching a dead end, then 'hunts' by scanning the grid from top to bottom looking for an unvisited cell adjacent to a visited cell. Upon finding one, it connects them and resumes the random walk. Time complexity: O(n²) due to the hunting phase. The algorithm creates mazes with slightly different characteristics than pure DFS, typically with fewer dead ends and somewhat shorter average path length."
+    };
+    document.getElementById("algorithm").addEventListener("change", function() {
+      const algo = document.getElementById("algorithm").value;
+      document.getElementById("algorithmDescription").innerHTML = "<p>" + (algorithmDescriptions[algo] || "No description available.") + "</p>";
+    });
+    
+    document.getElementById("startBtn").addEventListener("click", function() {
+      clearTimeouts();
+      generationInProgress = false;
+      solvingInProgress = false;
+      for (let cell of grid) {
+        cell.f = 0;
+        cell.g = 0;
+        cell.h = 0;
+        cell.previous = null;
+      }
+      const rows = parseInt(document.getElementById("height").value);
+      const cols = parseInt(document.getElementById("width").value);
+      const initState = document.getElementById("initState").value;
+      const algorithm = document.getElementById("algorithm").value;
+      const seedVal = document.getElementById("seed").value.trim();
+      
+      canvas.width = cols * cellSize;
+      canvas.height = rows * cellSize;
+      
+      initRandom(seedVal);
+      
+      if ((["dfs", "binaryTree", "kruskal", "prim", "huntAndKill"].includes(algorithm)) && initState === "empty") {
+        alert(algorithm.charAt(0).toUpperCase() + algorithm.slice(1) + " requires a grid with walls. Overriding initial grid to 'All Walls'.");
+        initGrid(rows, cols, "walls");
+      } else if (algorithm === "recursiveDivision" && initState === "walls") {
+        alert("Recursive Division requires an empty grid. Overriding initial grid to 'Empty'.");
+        initGrid(rows, cols, "empty");
+      } else {
+        initGrid(rows, cols, initState);
+      }
+      
+      if (algorithm === "dfs") {
+        dfsMaze(rows, cols);
+      } else if (algorithm === "binaryTree") {
+        binaryTreeMaze(rows, cols);
+      } else if (algorithm === "kruskal") {
+        kruskalMaze(rows, cols);
+      } else if (algorithm === "prim") {
+        primMaze(rows, cols);
+      } else if (algorithm === "recursiveDivision") {
+        recursiveDivisionMaze(rows, cols);
+      } else if (algorithm === "eller") {
+        ellerMaze(rows, cols);
+      } else if (algorithm === "growingTree") {
+        growingTreeMaze(rows, cols);
+      } else if (algorithm === "wilson") {
+        wilsonMaze(rows, cols);
+      } else if (algorithm === "huntAndKill") {
+        huntAndKillMaze(rows, cols);
+      } else {
+        alert("Algorithm not implemented yet.");
+      }
+    });
+    
+    document.getElementById("resetBtn").addEventListener("click", function() {
+      clearTimeouts();
+      generationInProgress = false;
+      solvingInProgress = false;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    });
+    
+    document.getElementById("solveBtn").addEventListener("click", function() {
+      if (generationInProgress || solvingInProgress) {
+        alert("Please wait until the current process finishes or press Reset.");
+        return;
+      }
+      for (let cell of grid) {
+        cell.f = 0;
+        cell.g = 0;
+        cell.h = 0;
+        cell.previous = null;
+      }
+      aStarSolve(parseInt(document.getElementById("height").value), parseInt(document.getElementById("width").value));
+    });
+    
+    window.addEventListener("resize", function() {
+    });
+  </script>
+</body>
+</html>
